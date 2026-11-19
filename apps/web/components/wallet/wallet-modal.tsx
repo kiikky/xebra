@@ -75,7 +75,12 @@ export function WalletModal({
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [tab, setTab] = useState<Family>("stellar");
+  const [activeError, setActiveError] = useState<string | null>(null);
   const [solanaSends, setSolanaSends] = useState(false);
+
+  useEffect(() => {
+    setActiveError(error);
+  }, [error]);
   useEffect(() => {
     if (!families?.includes("solana")) return;
     let live = true;
@@ -92,6 +97,7 @@ export function WalletModal({
     if (!d) return;
     if (families && !d.open) {
       setTab(families[0] ?? "stellar");
+      setActiveError(null);
       d.showModal();
     }
     if (!families && d.open) d.close();
@@ -141,7 +147,12 @@ export function WalletModal({
               type="button"
               role="tab"
               aria-selected={tab === f}
-              onClick={() => setTab(f)}
+              onClick={() => {
+                if (tab !== f) {
+                  setTab(f);
+                  setActiveError(null);
+                }
+              }}
               className={cn(
                 "flex-1 rounded-full px-3 py-1.5 text-[0.8125rem] font-medium transition-colors",
                 tab === f ? "bg-bone text-obsidian" : "text-bone/55 hover:text-bone",
@@ -243,12 +254,12 @@ export function WalletModal({
           )}
         </ul>
 
-        {error ? (
+        {activeError ? (
           <p
             role="alert"
             className="mt-4 rounded-2xl bg-alarm/10 p-3 text-[0.8125rem] leading-relaxed text-alarm ring-1 ring-inset ring-alarm/25"
           >
-            {error}
+            {activeError}
           </p>
         ) : null}
       </div>
