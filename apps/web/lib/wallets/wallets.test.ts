@@ -17,7 +17,12 @@ import {
   sendSolanaTransaction,
   solanaEntries,
 } from "./solana";
-import { keepDetected, stellarEntries } from "./stellar";
+import {
+  STELLAR_MAINNET_PASSPHRASE,
+  checkStellarNetwork,
+  keepDetected,
+  stellarEntries,
+} from "./stellar";
 import type { Connection, Eip1193Provider, WalletEntry } from "./types";
 
 const provider = (accounts: unknown): Eip1193Provider => ({
@@ -200,6 +205,40 @@ describe("Stellar detection", () => {
   it("marks a newly detected wallet", () => {
     const out = keepDetected([entry("lobstr", false)], [entry("lobstr", true)]);
     expect(out[0]?.installed).toBe(true);
+  });
+
+  it("allows a wallet on the expected network through (match)", async () => {
+    const k = {
+      getNetwork: async () => ({
+        network: "PUBLIC",
+        networkPassphrase: STELLAR_MAINNET_PASSPHRASE,
+      }),
+    };
+    await expect(checkStellarNetwork(k)).resolves.toBeUndefined();
+  });
+
+  it("rejects a wallet on the wrong network with a clear message (mismatch)", async () => {
+    const k = {
+      getNetwork: async () => ({
+        network: "TESTNET",
+        networkPassphrase: "Test SDF Network ; September 2015",
+      }),
+    };
+    await expect(checkStellarNetwork(k)).rejects.toThrow(
+      "Your wallet is on Testnet. Switch it to Mainnet, then try again.",
+    );
+  });
+
+  it("allows a wallet that cannot report its network through (unsupported)", async () => {
+    const unsupported = {
+      getNetwork: async () => {
+        throw new Error("getNetwork is not supported");
+      },
+    };
+    await expect(checkStellarNetwork(unsupported)).resolves.toBeUndefined();
+
+    const missing = {};
+    await expect(checkStellarNetwork(missing)).resolves.toBeUndefined();
   });
 });
 
