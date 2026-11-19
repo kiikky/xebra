@@ -18,20 +18,42 @@ import {
   TransferStatusSchema,
 } from "../api/schemas.js";
 import type { ChainId } from "../core/chains/ids.js";
+import { XebraError } from "../errors.js";
 import { SDK_VERSION } from "../version.js";
 
 export const DEFAULT_BASE_URL = "https://api.xebra.exchange";
 
+const RETRYABLE_API_CODES = new Set<string>([
+  "network_error",
+  "timeout",
+  "rate_limited",
+  "upstream_unavailable",
+  "internal_error",
+]);
+
+export type XebraApiErrorCode =
+  | ApiErrorCode
+  | "network_error"
+  | "timeout"
+  | "invalid_response"
+  | "wait_timeout";
+
 /** A problem the API answered with: `code` is stable, `detail` is written for a person. */
-export class XebraApiError extends Error {
+export class XebraApiError extends XebraError {
+  declare readonly code: XebraApiErrorCode;
+
   constructor(
     readonly status: number,
-    readonly code: ApiErrorCode | "network_error" | "timeout" | "invalid_response",
+    code: XebraApiErrorCode,
     readonly detail: string,
     /** The problem's other fields, such as `minimum`, `maximum`, `have` and `need`. */
     readonly extra: Record<string, unknown> = {},
+    opts?: { cause?: unknown },
   ) {
-    super(detail);
+    super(code, detail, {
+      retryable: RETRYABLE_API_CODES.has(code),
+      ...(opts?.cause !== undefined ? { cause: opts.cause } : {}),
+    });
     this.name = "XebraApiError";
   }
 }
@@ -111,19 +133,33 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
       });
     } catch (err) {
       if (timeout.aborted)
-        throw new XebraApiError(0, "timeout", `No answer within ${timeoutMs} ms.`);
+        throw new XebraApiError(
+          0,
+          "timeout",
+          `No answer within ${timeoutMs} ms.`,
+          {},
+          { cause: err },
+        );
       if (init.signal?.aborted) throw err;
-      throw new XebraApiError(0, "network_error", err instanceof Error ? err.message : String(err));
+      throw new XebraApiError(
+        0,
+        "network_error",
+        err instanceof Error ? err.message : String(err),
+        {},
+        { cause: err },
+      );
     }
 
     let body: unknown;
     try {
       body = await res.json();
-    } catch {
+    } catch (err) {
       throw new XebraApiError(
         res.status,
         "invalid_response",
         `The API answered ${res.status} without JSON.`,
+        {},
+        { cause: err },
       );
     }
     if (!res.ok) {
@@ -192,9 +228,11 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
     ): Promise<TransferStatus> {
       const interval = o.intervalMs ?? 5_000;
       const deadline = Date.now() + (o.timeoutMs ?? 30 * 60_000);
+      let lastStatus: TransferStatus | null = null;
       for (;;) {
         try {
           const status = await getTransfer(chain, tx, o.signal);
+          lastStatus = status;
           if (SETTLED.has(status.state)) return status;
         } catch (err) {
           const transient =
@@ -208,8 +246,9 @@ export function createXebraClient(opts: XebraClientOptions = {}) {
         if (Date.now() + interval > deadline) {
           throw new XebraApiError(
             0,
-            "timeout",
+            "wait_timeout",
             "The transfer did not settle in time; it may still. Ask again later.",
+            lastStatus ? { lastStatus: lastStatus.state } : {},
           );
         }
         await sleep(interval, o.signal);

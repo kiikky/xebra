@@ -196,7 +196,7 @@ Ask the wallet for each step in order, and wait for each to confirm before the n
 must be included on chain before the `burn` that spends it.
 
 ```ts twoslash
-import type { TransferStep } from "@xebra/sdk/build";
+import type { TransferStep } from "@xebra/sdk";
 declare const steps: TransferStep[];
 declare function signAndSend(step: TransferStep): Promise<string>;
 // ---cut---
@@ -300,7 +300,7 @@ For a claim on Solana where the recipient's USDC account must be opened, also pa
 
 ## Errors
 
-Every failure is thrown as `XebraApiError`. Its `code` is stable and safe to branch on; its
+Every failure is thrown as `XebraApiError` (aborting a signal rejects with the signal's reason instead). Its `code` is stable and safe to branch on; its
 `detail` is a sentence written for a person.
 
 ```ts twoslash
@@ -329,7 +329,7 @@ try {
     },
     code: {
       type: 'ApiErrorCode | "network_error" | "timeout" | "invalid_response"',
-      description: 'Stable. The API codes are listed in [the API overview](/docs/api).',
+      description: 'Stable. The API codes are listed on [Errors](/docs/errors).',
       required: true,
     },
     detail: { type: 'string', description: 'A sentence for a person.', required: true },
@@ -341,12 +341,12 @@ try {
   }}
 />
 
-Three codes come from the client itself, not the API:
+Three codes come from the client itself, rather than coming from an API problem response:
 
-- `network_error`: the request did not reach the API.
-- `timeout`: no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
-- `invalid_response`: the API answered with something that is not JSON or does not match the
-  SDK's schema.
+- `network_error` (`status` 0): the request did not reach the API.
+- `timeout` (`status` 0): no answer within `timeoutMs`, or `waitForDelivery` ran out of time.
+- `invalid_response` (carries the real HTTP status, such as 502): the API answered with something
+  that is not JSON or does not match the SDK's schema.
 
 The list of every code, with its HTTP status, is exported as `ERROR_STATUS` and `ERROR_CODES`.
 

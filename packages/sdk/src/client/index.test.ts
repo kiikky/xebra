@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { XebraError } from "../errors.js";
 import { XebraApiError, createXebraClient } from "./index.js";
 
 const json = (status: number, body: unknown, type = "application/json") =>
@@ -153,6 +154,56 @@ describe("waitForDelivery", () => {
     const client = createXebraClient({ fetch: async () => json(200, STATUS("pending")) });
     await expect(
       client.waitForDelivery("stellar", "a".repeat(64), { intervalMs: 5, timeoutMs: 20 }),
-    ).rejects.toMatchObject({ code: "timeout" });
+    ).rejects.toMatchObject({
+      code: "wait_timeout",
+      extra: { lastStatus: "pending" },
+    });
+  });
+});
+
+describe("XebraError and retryability", () => {
+  it("wraps network failures as retryable XebraError and XebraApiError preserving cause", async () => {
+    const fetchErr = new TypeError("fetch failed");
+    const client = createXebraClient({
+      fetch: async () => {
+        throw fetchErr;
+      },
+    });
+    const err = await client.routes().catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XebraError);
+    expect(err).toBeInstanceOf(XebraApiError);
+    expect(err).toMatchObject({
+      name: "XebraApiError",
+      code: "network_error",
+      retryable: true,
+      cause: fetchErr,
+    });
+  });
+
+  it("marks transient API codes retryable and non-transient codes non-retryable", async () => {
+    for (const [status, code] of [
+      [429, "rate_limited"],
+      [503, "upstream_unavailable"],
+      [500, "internal_error"],
+    ] as const) {
+      const client = createXebraClient({ fetch: async () => problem(status, code) });
+      const err = await client.routes().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(XebraError);
+      expect(err).toBeInstanceOf(XebraApiError);
+      expect((err as XebraApiError).retryable, code).toBe(true);
+    }
+
+    const client422 = createXebraClient({
+      fetch: async () => problem(422, "amount_above_maximum", { maximum: "100" }),
+    });
+    const rejected = await client422
+      .quote({ from: "stellar", to: "base", amount: "150" })
+      .catch((e: unknown) => e);
+    expect((rejected as XebraApiError).retryable).toBe(false);
+
+    const baseErr = new XebraError("bad_input", "invalid value");
+    expect(baseErr.name).toBe("XebraError");
+    expect(baseErr.code).toBe("bad_input");
+    expect(baseErr.retryable).toBe(false);
   });
 });
